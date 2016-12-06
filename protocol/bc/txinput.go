@@ -8,6 +8,7 @@ import (
 
 	"chain/crypto/sha3pool"
 	"chain/encoding/blockchain"
+	"chain/encoding/bufpool"
 )
 
 type (
@@ -87,7 +88,7 @@ func NewIssuanceInput(nonce []byte, amount uint64, referenceData []byte, initial
 	}
 }
 
-func (t TxInput) AssetAmount() AssetAmount {
+func (t *TxInput) AssetAmount() AssetAmount {
 	if ii, ok := t.TypedInput.(*IssuanceInput); ok {
 		return AssetAmount{
 			AssetID: ii.AssetID(),
@@ -98,7 +99,7 @@ func (t TxInput) AssetAmount() AssetAmount {
 	return si.AssetAmount
 }
 
-func (t TxInput) AssetID() AssetID {
+func (t *TxInput) AssetID() AssetID {
 	if ii, ok := t.TypedInput.(*IssuanceInput); ok {
 		return ii.AssetID()
 	}
@@ -106,7 +107,7 @@ func (t TxInput) AssetID() AssetID {
 	return si.AssetID
 }
 
-func (t TxInput) Amount() uint64 {
+func (t *TxInput) Amount() uint64 {
 	if ii, ok := t.TypedInput.(*IssuanceInput); ok {
 		return ii.Amount
 	}
@@ -114,21 +115,21 @@ func (t TxInput) Amount() uint64 {
 	return si.Amount
 }
 
-func (t TxInput) ControlProgram() []byte {
+func (t *TxInput) ControlProgram() []byte {
 	if si, ok := t.TypedInput.(*SpendInput); ok {
 		return si.ControlProgram
 	}
 	return nil
 }
 
-func (t TxInput) IssuanceProgram() []byte {
+func (t *TxInput) IssuanceProgram() []byte {
 	if ii, ok := t.TypedInput.(*IssuanceInput); ok {
 		return ii.IssuanceProgram
 	}
 	return nil
 }
 
-func (t TxInput) Arguments() [][]byte {
+func (t *TxInput) Arguments() [][]byte {
 	switch inp := t.TypedInput.(type) {
 	case *IssuanceInput:
 		return inp.Arguments
@@ -279,73 +280,77 @@ func (t *TxInput) readFrom(r io.Reader, txVersion uint64) (err error) {
 }
 
 // assumes w has sticky errors
-func (t TxInput) writeTo(w io.Writer, serflags uint8) {
+func (t *TxInput) writeTo(w io.Writer, serflags uint8) {
 	blockchain.WriteVarint63(w, t.AssetVersion) // TODO(bobg): check and return error
-	blockchain.WriteVarstr31(w, t.InputCommitmentBytes())
+	buf := bufpool.Get()
+	defer bufpool.Put(buf)
+	t.WriteInputCommitment(buf)
+	blockchain.WriteVarstr31(w, buf.Bytes())
 	blockchain.WriteVarstr31(w, t.ReferenceData)
 	if serflags&SerWitness != 0 {
-		blockchain.WriteVarstr31(w, t.inputWitnessBytes())
+		buf.Reset()
+		t.writeInputWitness(buf)
+		blockchain.WriteVarstr31(w, buf.Bytes())
 	}
 }
 
-func (t TxInput) InputCommitmentBytes() []byte {
-	inputCommitment := new(bytes.Buffer)
+func (t *TxInput) WriteInputCommitment(w io.Writer) {
 	if t.AssetVersion == 1 {
 		switch inp := t.TypedInput.(type) {
 		case *IssuanceInput:
-			inputCommitment.Write([]byte{0})                     // issuance type
-			blockchain.WriteVarstr31(inputCommitment, inp.Nonce) // TODO(bobg): check and return error
+			w.Write([]byte{0})                     // issuance type
+			blockchain.WriteVarstr31(w, inp.Nonce) // TODO(bobg): check and return error
 			assetID := t.AssetID()
-			inputCommitment.Write(assetID[:])
-			blockchain.WriteVarint63(inputCommitment, inp.Amount) // TODO(bobg): check and return error
+			w.Write(assetID[:])
+			blockchain.WriteVarint63(w, inp.Amount) // TODO(bobg): check and return error
 
 		case *SpendInput:
-			inputCommitment.Write([]byte{1}) // spend type
-			inp.Outpoint.WriteTo(inputCommitment)
-			inp.OutputCommitment.writeTo(inputCommitment, t.AssetVersion)
+			w.Write([]byte{1}) // spend type
+			inp.Outpoint.WriteTo(w)
+			inp.OutputCommitment.writeTo(w, t.AssetVersion)
 		}
 	}
-	return inputCommitment.Bytes()
 }
 
-func (t TxInput) inputWitnessBytes() []byte {
-	inputWitness := new(bytes.Buffer)
+func (t *TxInput) writeInputWitness(w io.Writer) {
 	if t.AssetVersion == 1 {
 		var arguments [][]byte
 		switch inp := t.TypedInput.(type) {
 		case *IssuanceInput:
-			inputWitness.Write(inp.InitialBlock[:])
-			blockchain.WriteVarint63(inputWitness, inp.VMVersion)       // TODO(bobg): check and return error
-			blockchain.WriteVarstr31(inputWitness, inp.IssuanceProgram) // TODO(bobg): check and return error
+			w.Write(inp.InitialBlock[:])
+			blockchain.WriteVarint63(w, inp.VMVersion)       // TODO(bobg): check and return error
+			blockchain.WriteVarstr31(w, inp.IssuanceProgram) // TODO(bobg): check and return error
 			arguments = inp.Arguments
 		case *SpendInput:
 			arguments = inp.Arguments
 		}
-		blockchain.WriteVarint31(inputWitness, uint64(len(arguments))) // TODO(bobg): check and return error
+		blockchain.WriteVarint31(w, uint64(len(arguments))) // TODO(bobg): check and return error
 		for _, arg := range arguments {
-			blockchain.WriteVarstr31(inputWitness, arg) // TODO(bobg): check and return error
+			blockchain.WriteVarstr31(w, arg) // TODO(bobg): check and return error
 		}
 	}
-	return inputWitness.Bytes()
 }
 
-func (t TxInput) WitnessHash() Hash {
+func (t *TxInput) witnessHash() Hash {
 	var h Hash
-	sha3pool.Sum256(h[:], t.inputWitnessBytes())
+	sha := sha3pool.Get256()
+	defer sha3pool.Put256(sha)
+	t.writeInputWitness(sha)
+	sha.Read(h[:])
 	return h
 }
 
-func (t TxInput) Outpoint() (o Outpoint) {
+func (t *TxInput) Outpoint() (o Outpoint) {
 	if si, ok := t.TypedInput.(*SpendInput); ok {
 		o = si.Outpoint
 	}
 	return o
 }
 
-func (si SpendInput) IsIssuance() bool { return false }
+func (si *SpendInput) IsIssuance() bool { return false }
 
-func (ii IssuanceInput) IsIssuance() bool { return true }
+func (ii *IssuanceInput) IsIssuance() bool { return true }
 
-func (ii IssuanceInput) AssetID() AssetID {
+func (ii *IssuanceInput) AssetID() AssetID {
 	return ComputeAssetID(ii.IssuanceProgram, ii.InitialBlock, ii.VMVersion)
 }
