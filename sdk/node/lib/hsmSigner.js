@@ -39,6 +39,8 @@ class HsmSigner {
   }
 
   signBatch(templates) {
+    templates = templates.filter((template) => template != null)
+
     let promise = Promise.resolve(templates)
 
     if (Object.keys(this.signerConnections).length == 0) {
@@ -54,8 +56,8 @@ class HsmSigner {
           xpubs: signer.xpubs
       })).then(resp => {
         return {
-          successes: resp.filter((item) => !item.code),
-          errors: resp.filter((item) => item.code),
+          successes: resp.map((item) => item.code ? null : item),
+          errors: resp.map((item) => item.code ? item : null),
           response: resp,
         }
       })

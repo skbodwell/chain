@@ -117,8 +117,8 @@ describe('Chain SDK integration test', function() {
         {alias: `eve-${uuid.v4()}`, root_xpubs: [otherKey.xpub], quorum: 1}, // success
       ])
     ).then(batchResponse => {
-      assert.equal(batchResponse.successes.length, 2)
-      assert.equal(batchResponse.errors.length, 1)
+      assert.equal(batchResponse.successes[1], null)
+      assert.deepEqual([].concat(batchResponse.errors[0], batchResponse.errors[2]), [null, null])
     })
 
     // Asset creation
@@ -143,8 +143,8 @@ describe('Chain SDK integration test', function() {
         {alias: copperAlias, root_xpubs: [otherKey.xpub], quorum: 1}, // success
       ])
     ).then(batchResponse => {
-      assert.equal(batchResponse.successes.length, 2)
-      assert.equal(batchResponse.errors.length, 1)
+      assert.equal(batchResponse.successes[1], null)
+      assert.deepEqual([].concat(batchResponse.errors[0], batchResponse.errors[2]), [null, null])
     })
 
     // Basic issuance
