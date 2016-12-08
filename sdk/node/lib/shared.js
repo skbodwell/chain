@@ -29,8 +29,8 @@ module.exports = {
 
     return client.request(path, params).then(response => {
       return {
-        successes: response.filter((item) => !item.code),
-        errors: response.filter((item) => item.code),
+        successes: response.map((item) => item.code ? null : item),
+        errors: response.map((item) => item.code ? item : null),
         response: response,
       }
     })
